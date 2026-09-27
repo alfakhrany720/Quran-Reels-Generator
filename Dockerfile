@@ -15,9 +15,16 @@ RUN apt-get update && apt-get install -y \
     g++ \
     make \
     curl \
+    pkg-config \
+    libjpeg62-turbo-dev \
+    zlib1g-dev \
+    libfreetype6-dev \
+    libraqm-dev \
+    libfribidi-dev \
+    libharfbuzz-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Fix ImageMagick security policies for MoviePy
+# ImageMagick policy: allow MoviePy to use temporary text files/PDF if needed.
 RUN for f in \
         /etc/ImageMagick-6/policy.xml \
         /etc/ImageMagick-7/policy.xml; \
@@ -27,6 +34,10 @@ RUN for f in \
             sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/g' "$f"; \
         fi; \
     done
+
+# Fail the build instead of producing broken Quran text if the Quran font
+# is missing from the image.
+RUN test -f /usr/share/fonts/opentype/fonts-hosny-amiri/AmiriQuran.ttf
 
 WORKDIR /app
 
@@ -41,9 +52,8 @@ RUN mkdir -p \
     /app/outputs \
     /app/outputs/audio \
     /app/outputs/video \
-    /app/fonts
-
-RUN fc-cache -f -v || true
+    /app/fonts && \
+    fc-cache -f -v
 
 ENV FFMPEG_BINARY=/usr/bin/ffmpeg
 ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
