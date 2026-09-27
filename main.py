@@ -11,7 +11,6 @@ import json
 import datetime
 import logging
 import traceback
-import glob
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
@@ -103,19 +102,20 @@ FONT_PATH = os.path.join(
     "DUBAI-MEDIUM.TTF"
 )
 
-# Prefer Amiri, which has much better support for Arabic/Quranic glyphs.
+# Prefer the Quran-specific Amiri font installed in the Linux container.
+# It supports Quranic annotation marks that the Dubai font may not contain.
 ARABIC_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/amiri/Amiri-Regular.ttf",
-    "/usr/share/fonts/truetype/amiri/AmiriQuran.ttf",
-    "/usr/share/fonts/truetype/amiri/Amiri-Bold.ttf",
-    "/usr/share/fonts/truetype/arabic/Amiri-Regular.ttf",
-    os.path.join(FONT_DIR, "Amiri-Regular.ttf"),
-    os.path.join(FONT_DIR, "AmiriQuran.ttf"),
-    FONT_PATH if os.path.isfile(FONT_PATH) else os.path.join(FONT_DIR, "DUBAI-BOLD.TTF"),
+    "/usr/share/fonts/opentype/fonts-hosny-amiri/AmiriQuran.ttf",
+    "/usr/share/fonts/opentype/fonts-hosny-amiri/Amiri-Regular.ttf",
+    os.path.join(FONT_DIR, "DUBAI-BOLD.TTF"),
 ]
 
 FONT_PATH_ARABIC = next(
-    (p for p in ARABIC_FONT_CANDIDATES if os.path.isfile(p)),
+    (
+        path
+        for path in ARABIC_FONT_CANDIDATES
+        if os.path.isfile(path)
+    ),
     os.path.join(FONT_DIR, "DUBAI-BOLD.TTF")
 )
 
@@ -904,178 +904,253 @@ def create_text_clip(
     video_height=1920
 ):
     """
-    Render Quranic Arabic using Pillow.
+    Render Quranic Arabic text with Pillow.
 
-    The previous implementation used a fixed number of words per line,
-    which could make long lines run outside the 1080px frame. It also used
-    the Dubai font, which does not contain all Quranic glyphs/marks.
-
-    This version:
-      - prefers the Amiri font for Arabic/Quranic characters
-      - keeps the original Quran text and its diacritics
-      - shapes Arabic with arabic-reshaper + python-bidi
-      - wraps by actual pixel width instead of word count
-      - automatically reduces the font size when necessary
+    Uses the Quran-specific AmiriQuran font when available,
+    then applies Arabic shaping + RTL ordering and dynamically
+    wraps/scales the verse so it stays completely inside the frame.
     """
 
     if not arabic:
-        return None
+        return ImageClip(
+            np.zeros((1, 1, 4), dtype=np.uint8)
+        ).set_duration(duration)
 
-    # Keep a safe margin on both sides of the 1080px video.
-    max_text_width = int(video_width * 0.88)
-
-    # Start large, then automatically reduce until the complete verse fits.
-    max_font_size = 72
-    min_font_size = 38
-
-    # Prefer Amiri Quran/Amiri. If the Docker image does not have it yet,
-    # fall back to the existing project font.
-    font_path = FONT_PATH_ARABIC
-
-    if not os.path.isfile(font_path):
-        for candidate in [
-            "/usr/share/fonts/truetype/amiri/Amiri-Regular.ttf",
-            "/usr/share/fonts/truetype/amiri/AmiriQuran.ttf",
-            "/usr/share/fonts/truetype/amiri/Amiri-Bold.ttf",
-            os.path.join(FONT_DIR, "Amiri-Regular.ttf"),
-            os.path.join(FONT_DIR, "AmiriQuran.ttf"),
-            os.path.join(FONT_DIR, "DUBAI-BOLD.TTF"),
-        ]:
-            if os.path.isfile(candidate):
-                font_path = candidate
-                break
-
+    # Keep the original Uthmani Quran text intact.
     words = arabic.split()
 
-    def shape_text(text):
-        # Do not remove harakat/Quranic marks.
-        # Use the installed arabic-reshaper API.
-        # This version accepts the text as the only positional argument.
-        # It preserves the original Quranic marks by default.
-        reshaped = arabic_reshaper.reshape(text)
-        return get_display(reshaped)
+    # Text should occupy roughly 86% of the video width.
+    max_text_width = int(video_width * 0.86)
 
-    def measure(draw, text, font):
+    # Keep enough vertical room so long verses do not run off screen.
+    max_text_height = int(video_height * 0.62)
+
+    # Use a clean range of sizes and choose the largest one
+    # that fits the complete verse.
+    candidate_sizes = list(range(78, 39, -2))
+
+    selected = None
+
+    # Small helper: shape one Arabic line and measure its visual width.
+    def shape_line(line, font, draw):
+        reshaped = arabic_reshaper.reshape(line)
+        visual = get_display(reshaped)
+
         bbox = draw.textbbox(
             (0, 0),
-            text,
+            visual,
             font=font,
             stroke_width=2
         )
-        return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    def make_lines(font):
-        """
-        Build lines according to real rendered width.
-        This prevents text from being cut off at the left/right edges.
-        """
-        dummy = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(dummy)
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+
+        return visual, width, height
+
+    # Dummy canvas for measurements.
+    dummy = Image.new(
+        "RGBA",
+        (video_width, video_height),
+        (0, 0, 0, 0)
+    )
+
+    measure_draw = ImageDraw.Draw(dummy)
+
+    for fontsize in candidate_sizes:
+
+        try:
+            font = ImageFont.truetype(
+                FONT_PATH_ARABIC,
+                fontsize
+            )
+        except Exception:
+            # Absolute fallback if the configured font cannot be loaded.
+            font = ImageFont.truetype(
+                FONT_PATH_ENGLISH,
+                fontsize
+            )
 
         lines = []
         current_words = []
 
+        # Greedy wrapping based on actual rendered pixel width.
         for word in words:
+
             candidate_words = current_words + [word]
             candidate = " ".join(candidate_words)
-            shaped = shape_text(candidate)
 
-            width, _ = measure(draw, shaped, font)
+            _, candidate_width, _ = shape_line(
+                candidate,
+                font,
+                measure_draw
+            )
 
-            if current_words and width > max_text_width:
+            if (
+                current_words
+                and candidate_width > max_text_width
+            ):
                 lines.append(" ".join(current_words))
                 current_words = [word]
+
             else:
                 current_words = candidate_words
 
         if current_words:
             lines.append(" ".join(current_words))
 
-        shaped_lines = [shape_text(line) for line in lines]
+        # Measure the resulting lines.
+        visual_lines = []
+        total_height = 0
+        line_gap = max(10, int(fontsize * 0.28))
 
-        line_sizes = [
-            measure(draw, line, font)
-            for line in shaped_lines
-        ]
+        fits_width = True
 
-        return shaped_lines, line_sizes
+        for line in lines:
 
-    # Find a font size that fits both horizontally and vertically.
-    selected_font = None
-    selected_lines = None
-    selected_sizes = None
-    selected_spacing = None
+            visual, width, height = shape_line(
+                line,
+                font,
+                measure_draw
+            )
 
-    for fontsize in range(max_font_size, min_font_size - 1, -2):
+            if width > max_text_width:
+                fits_width = False
+                break
+
+            visual_lines.append(
+                (visual, width, height)
+            )
+
+            total_height += height
+
+        if visual_lines:
+            total_height += (
+                line_gap * (len(visual_lines) - 1)
+            )
+
+        if (
+            fits_width
+            and total_height <= max_text_height
+            and len(visual_lines) <= 8
+        ):
+            selected = (
+                font,
+                visual_lines,
+                total_height,
+                line_gap
+            )
+            break
+
+    # Safety fallback.
+    if selected is None:
+
+        fontsize = 40
+
         font = ImageFont.truetype(
-            font_path,
+            FONT_PATH_ARABIC,
             fontsize
         )
 
-        shaped_lines, line_sizes = make_lines(font)
+        lines = []
+        current_words = []
 
-        # Comfortable line spacing.
-        spacing = max(12, int(fontsize * 0.28))
+        for word in words:
 
+            candidate = (
+                " ".join(current_words + [word])
+            )
+
+            visual, width, _ = shape_line(
+                candidate,
+                font,
+                measure_draw
+            )
+
+            if (
+                current_words
+                and width > max_text_width
+            ):
+                lines.append(
+                    " ".join(current_words)
+                )
+                current_words = [word]
+
+            else:
+                current_words.append(word)
+
+        if current_words:
+            lines.append(
+                " ".join(current_words)
+            )
+
+        visual_lines = []
+
+        for line in lines:
+            visual, width, height = shape_line(
+                line,
+                font,
+                measure_draw
+            )
+            visual_lines.append(
+                (visual, width, height)
+            )
+
+        line_gap = 10
         total_height = (
-            sum(height for _, height in line_sizes)
-            + spacing * max(0, len(shaped_lines) - 1)
-            + 40
+            sum(h for _, _, h in visual_lines)
+            + line_gap * max(0, len(visual_lines) - 1)
         )
 
-        # Leave room around the text in the 1920px reel.
-        if total_height <= int(video_height * 0.72):
-            selected_font = font
-            selected_lines = shaped_lines
-            selected_sizes = line_sizes
-            selected_spacing = spacing
-            break
-
-    # If the verse is exceptionally long, use the smallest size rather
-    # than allowing the text to be cropped.
-    if selected_font is None:
-        selected_font = ImageFont.truetype(
-            font_path,
-            min_font_size
+        selected = (
+            font,
+            visual_lines,
+            total_height,
+            line_gap
         )
-        selected_lines, selected_sizes = make_lines(selected_font)
-        selected_spacing = max(10, int(min_font_size * 0.25))
 
-    total_height = (
-        sum(height for _, height in selected_sizes)
-        + selected_spacing * max(0, len(selected_lines) - 1)
-        + 40
+    font, visual_lines, total_height, line_gap = selected
+
+    # Add padding around the text.
+    padding_x = 30
+    padding_y = 30
+
+    canvas_height = (
+        total_height
+        + padding_y * 2
     )
 
-    # Transparent RGBA layer.
     img = Image.new(
         "RGBA",
-        (video_width, total_height),
+        (
+            video_width,
+            canvas_height
+        ),
         (0, 0, 0, 0)
     )
 
     draw = ImageDraw.Draw(img)
 
-    # Center the complete text block vertically inside its own image.
-    y = 20
+    # Center the complete block vertically.
+    y = padding_y
 
-    for line, (line_width, line_height) in zip(
-        selected_lines,
-        selected_sizes
-    ):
-        x = (video_width - line_width) // 2
+    for visual, width, height in visual_lines:
 
-        # White Quran text with a clean black outline.
+        x = (
+            video_width - width
+        ) // 2
+
+        # White Quran text with a subtle black outline.
         draw.text(
             (x, y),
-            line,
-            font=selected_font,
+            visual,
+            font=font,
             fill=(255, 255, 255, 255),
             stroke_width=2,
             stroke_fill=(0, 0, 0, 255)
         )
 
-        y += line_height + selected_spacing
+        y += height + line_gap
 
     frame = np.array(img)
 
