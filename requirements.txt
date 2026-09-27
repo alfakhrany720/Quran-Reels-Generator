@@ -3,3 +3,6 @@ flask-cors
 requests
 pydub
 moviepy==1.0.3
+Pillow
+arabic-reshaper
+python-bidi
