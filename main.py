@@ -949,13 +949,10 @@ def create_text_clip(
 
     def shape_text(text):
         # Do not remove harakat/Quranic marks.
-        reshaped = arabic_reshaper.reshape(
-            text,
-            {
-                "delete_harakat": False,
-                "support_ligatures": True
-            }
-        )
+        # Use the installed arabic-reshaper API.
+        # This version accepts the text as the only positional argument.
+        # It preserves the original Quranic marks by default.
+        reshaped = arabic_reshaper.reshape(text)
         return get_display(reshaped)
 
     def measure(draw, text, font):
