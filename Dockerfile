@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     imagemagick \
     fonts-dejavu \
     fonts-liberation \
+    fonts-hosny-amiri \
     fontconfig \
     gcc \
     g++ \
