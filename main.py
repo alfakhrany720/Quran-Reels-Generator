@@ -940,8 +940,8 @@ def create_text_clip(
 
     words = arabic.split()
 
-    max_text_width = int(video_width * 0.84)
-    max_text_height = int(video_height * 0.62)
+    max_text_width = int(video_width * 0.88)
+    max_text_height = int(video_height * 0.44)
 
     # Prefer RAQM when Pillow has it. This is the cleanest route
     # for Arabic shaping and Quranic combining marks.
@@ -984,7 +984,7 @@ def create_text_clip(
             (0, 0),
             visual,
             font=font,
-            stroke_width=2,
+            stroke_width=1,
             **text_kwargs()
         )
         return (
@@ -996,7 +996,7 @@ def create_text_clip(
     selected = None
 
     # Long enough range to guarantee the complete ayah fits.
-    for fontsize in range(78, 29, -2):
+    for fontsize in range(48, 27, -2):
 
         font = ImageFont.truetype(
             FONT_PATH_ARABIC,
@@ -1036,7 +1036,7 @@ def create_text_clip(
         visual_lines = []
         line_gap = max(
             8,
-            int(fontsize * 0.22)
+            int(fontsize * 0.18)
         )
         total_height = 0
         fits = True
@@ -1084,7 +1084,7 @@ def create_text_clip(
         # Final guaranteed-safe size.
         font = ImageFont.truetype(
             FONT_PATH_ARABIC,
-            30
+            28
         )
 
         lines = []
