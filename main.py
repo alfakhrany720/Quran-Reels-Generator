@@ -263,12 +263,17 @@ except Exception as e:
 from moviepy.editor import (
     VideoFileClip,
     AudioFileClip,
-    TextClip,
+    ImageClip,
     CompositeVideoClip,
     concatenate_videoclips
 )
 
 import moviepy.video.fx.all as vfx
+
+from PIL import Image, ImageDraw, ImageFont
+import arabic_reshaper
+from bidi.algorithm import get_display
+import numpy as np
 
 
 # ============================================================
@@ -883,74 +888,129 @@ def wrap_text(
 def create_text_clip(
     arabic,
     duration,
-    video_height=1080
+    video_width=1080,
+    video_height=1920
 ):
-
     """
-    Create text clip for Arabic only.
+    Render Arabic Quran text using Pillow.
 
-    Dynamically adjusts font size and wrapping
-    based on text length.
+    Pillow + arabic-reshaper + python-bidi are used instead of
+    MoviePy TextClip/ImageMagick so Arabic letters remain connected
+    and the text is displayed in the correct RTL direction.
     """
 
     words = arabic.split()
-
     word_count = len(words)
 
-    # Dynamic settings
-
+    # Dynamic font size and wrapping
     if word_count > 60:
-
-        fontsize = 16
+        fontsize = 48
         per_line = 10
-
     elif word_count > 40:
-
-        fontsize = 20
+        fontsize = 54
         per_line = 9
-
     elif word_count > 25:
-
-        fontsize = 25
+        fontsize = 60
         per_line = 8
-
     elif word_count > 15:
-
-        fontsize = 30
+        fontsize = 66
         per_line = 7
-
     else:
-
-        fontsize = 35
+        fontsize = 72
         per_line = 6
 
-    wrapped_text = wrap_text(
-        arabic,
-        per_line
+    # Wrap Arabic text
+    lines = []
+
+    for i in range(0, len(words), per_line):
+        lines.append(
+            " ".join(words[i:i + per_line])
+        )
+
+    # Arabic shaping + right-to-left display
+    shaped_lines = []
+
+    for line in lines:
+        reshaped = arabic_reshaper.reshape(line)
+        bidi_line = get_display(reshaped)
+        shaped_lines.append(bidi_line)
+
+    # Load Arabic font
+    font = ImageFont.truetype(
+        FONT_PATH_ARABIC,
+        fontsize
     )
 
-    # Create centered text clip
+    # Temporary image used to measure text
+    dummy = Image.new(
+        "RGBA",
+        (10, 10),
+        (0, 0, 0, 0)
+    )
 
-    ar_clip = TextClip(
+    draw = ImageDraw.Draw(dummy)
 
-        wrapped_text,
+    spacing = int(fontsize * 0.45)
 
-        font=FONT_PATH_ARABIC,
+    line_sizes = []
 
-        fontsize=fontsize,
+    for line in shaped_lines:
+        bbox = draw.textbbox(
+            (0, 0),
+            line,
+            font=font,
+            stroke_width=1
+        )
 
-        color='white',
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
 
-        method='caption',
+        line_sizes.append(
+            (width, height)
+        )
 
-        size=(900, None),
+    total_height = (
+        sum(x[1] for x in line_sizes)
+        + spacing * max(0, len(shaped_lines) - 1)
+        + 40
+    )
 
-        align='center'
+    # Transparent text image
+    img = Image.new(
+        "RGBA",
+        (video_width, total_height),
+        (0, 0, 0, 0)
+    )
 
-    ).set_duration(
-        duration
-    ).set_position(
-        'center'
+    draw = ImageDraw.Draw(img)
+
+    y = 20
+
+    for line, (line_width, line_height) in zip(
+        shaped_lines,
+        line_sizes
+    ):
+        x = (video_width - line_width) // 2
+
+        # White text with black outline
+        draw.text(
+            (x, y),
+            line,
+            font=font,
+            fill="white",
+            stroke_width=3,
+            stroke_fill="black"
+        )
+
+        y += line_height + spacing
+
+    # Convert PIL image to MoviePy ImageClip
+    frame = np.array(img)
+
+    ar_clip = (
+        ImageClip(frame)
+        .set_duration(duration)
+        .set_position(("center", "center"))
     )
 
     return ar_clip
