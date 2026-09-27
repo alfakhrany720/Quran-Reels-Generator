@@ -44,9 +44,9 @@ logging.info(f"Execution Directory: {EXEC_DIR}")
 logging.info(f"Bundled Directory: {BUNDLE_DIR}")
 
 # --- Step: Define Paths ---
-FFMPEG_EXE = os.path.join(BUNDLE_DIR, "bin", "ffmpeg", "ffmpeg.exe")
-IM_MAGICK_EXE = os.path.join(BUNDLE_DIR, "bin", "imagemagick", "magick.exe")
-IM_HOME = os.path.join(BUNDLE_DIR, "bin", "imagemagick")
+FFMPEG_EXE = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+IM_MAGICK_EXE = shutil.which("magick") or "/usr/bin/magick"
+IM_HOME = "/usr"
 
 VISION_DIR = os.path.join(BUNDLE_DIR, "vision")
 UI_PATH = os.path.join(BUNDLE_DIR, "UI.html")
@@ -70,8 +70,11 @@ except Exception as e:
     logging.error(f"Failed to create directories: {e}")
 
 # Validate Bundled Requirements
-if not os.path.isfile(FFMPEG_EXE): logging.error(f"Missing ffmpeg.exe at {FFMPEG_EXE}")
-if not os.path.isfile(IM_MAGICK_EXE): logging.error(f"Missing magick.exe at {IM_MAGICK_EXE}")
+if not os.path.isfile(FFMPEG_EXE):
+    logging.error(f"Missing ffmpeg at {FFMPEG_EXE}")
+
+if not os.path.isfile(IM_MAGICK_EXE):
+    logging.error(f"Missing ImageMagick at {IM_MAGICK_EXE}")
 if not os.path.isdir(VISION_DIR): logging.error(f"Missing vision folder at {VISION_DIR}")
 if not os.path.isfile(UI_PATH): logging.error(f"Missing UI.html at {UI_PATH}")
 
@@ -82,7 +85,7 @@ os.environ["IMAGEIO_FFMPEG_EXE"] = FFMPEG_EXE
 # ImageMagick Environment Setup
 os.environ["IMAGEMAGICK_BINARY"] = IM_MAGICK_EXE
 os.environ["MAGICK_HOME"] = IM_HOME
-os.environ["MAGICK_CONFIGURE_PATH"] = os.path.join(IM_HOME, "config")
+MAGICK_CODER_MODULE_PATH
 # Pre-flight check: if config dir missing, fallback to root or modules
 if not os.path.exists(os.environ["MAGICK_CONFIGURE_PATH"]):
     os.environ["MAGICK_CONFIGURE_PATH"] = IM_HOME # Portable versions often have xmls in root
@@ -104,7 +107,7 @@ import requests as http_requests
 from pydub import AudioSegment
 AudioSegment.converter = FFMPEG_EXE
 AudioSegment.ffmpeg = FFMPEG_EXE
-AudioSegment.ffprobe = os.path.join(os.path.dirname(FFMPEG_EXE), "ffprobe.exe")
+AudioSegment.ffprobe = shutil.which("ffprobe") or "/usr/bin/ffprobe"
 
 from moviepy.config import change_settings
 try:
@@ -446,8 +449,8 @@ if __name__ == '__main__':
     print('=' * 50)
     
     # Open browser automatically
-    webbrowser.open('http://127.0.0.1:5000')
+    Comment
     
     # Start Flask server
     # Important: host='127.0.0.1' as requested
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
